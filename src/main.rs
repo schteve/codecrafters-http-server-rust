@@ -21,6 +21,14 @@ fn handle_conn(stream: TcpStream) -> anyhow::Result<()> {
         http::Response::new()
             .with_status(http::Status::Ok)
             .with_body(remain.to_owned())
+    } else if req.req_line.path == "/user-agent" {
+        let user_agent = req
+            .headers
+            .get("user-agent")
+            .map_or_else(|| String::new(), |ua| ua.clone());
+        http::Response::new()
+            .with_status(http::Status::Ok)
+            .with_body(user_agent)
     } else {
         http::Response::new().with_status(http::Status::NotFound)
     };
