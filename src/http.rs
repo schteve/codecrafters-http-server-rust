@@ -1,10 +1,13 @@
+use std::{collections::HashMap, fmt};
+
 use nom::{
     self,
     branch::alt,
-    bytes::complete::{tag, take_till},
+    bytes::complete::{tag, take_till, take_until1, take_while1},
     character::complete::{digit1, space1},
-    combinator::{map, map_res, recognize, value},
-    sequence::tuple,
+    combinator::{map, map_res, value},
+    multi::many0,
+    sequence::{pair, terminated, tuple},
     IResult,
 };
 
@@ -54,9 +57,17 @@ impl Version {
 
         Ok((remain, Self { major, minor }))
     }
+}
 
-    pub fn serialize(&self) -> String {
-        format!("HTTP/{}.{}", self.major, self.minor)
+impl Default for Version {
+    fn default() -> Self {
+        Self { major: 1, minor: 1 }
+    }
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "HTTP/{}.{}", self.major, self.minor)
     }
 }
 
@@ -92,28 +103,29 @@ impl RequestLine {
 #[derive(Debug, Eq, PartialEq)]
 pub struct Request {
     pub req_line: RequestLine,
-    pub host: String,
-    pub user_agent: String,
+    pub headers: HashMap<String, String>,
 }
 
 impl Request {
     pub fn parser(input: &str) -> IResult<&str, Self> {
-        let (remain, (req_line, _, host, _, _, user_agent, _)) = tuple((
+        let (remain, (req_line, headers)) = tuple((
             RequestLine::parser,
-            tag("Host: "),
-            map(recognize(take_till(is_whitespace)), ToOwned::to_owned),
-            tag("\r\n"),
-            tag("User-Agent: "),
-            map(recognize(take_till(is_whitespace)), ToOwned::to_owned),
-            tag("\r\n"),
+            many0(pair(
+                terminated(take_while1(is_header_key), tag(": ")),
+                terminated(take_until1("\r\n"), tag("\r\n")),
+            )),
         ))(input)?;
+
+        let headers_owned = headers
+            .into_iter()
+            .map(|(k, v)| (k.to_lowercase(), v.to_owned()))
+            .collect();
 
         Ok((
             remain,
             Self {
                 req_line,
-                host,
-                user_agent,
+                headers: headers_owned,
             },
         ))
     }
@@ -123,10 +135,16 @@ fn is_whitespace(c: char) -> bool {
     c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
-#[derive(Debug, Eq, PartialEq)]
+fn is_header_key(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '-'
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
 pub enum Status {
     Ok,
     NotFound,
+    #[default]
+    Internal,
 }
 
 impl Status {
@@ -134,6 +152,7 @@ impl Status {
         match self {
             Self::Ok => 200,
             Self::NotFound => 404,
+            Self::Internal => 500,
         }
     }
 
@@ -141,45 +160,85 @@ impl Status {
         match self {
             Self::Ok => "OK",
             Self::NotFound => "NOT FOUND",
+            Self::Internal => "Internal Server Error",
         }
-    }
-
-    pub fn serialize(&self) -> String {
-        format!("{} {}", self.code(), self.text())
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.code(), self.text())
+    }
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct StatusLine {
     pub version: Version,
     pub status: Status,
 }
 
-impl StatusLine {
-    pub fn serialize(&self) -> String {
-        format!(
-            "{} {}\r\n",
-            self.version.serialize(),
-            self.status.serialize()
-        )
+impl std::fmt::Display for StatusLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}\r\n", self.version, self.status)
     }
 }
 
+#[derive(Default)]
 pub struct Response {
     pub status_line: StatusLine,
+    pub headers: HashMap<String, String>,
+    pub body: Option<String>,
 }
 
 impl Response {
-    pub fn with_status(status: Status) -> Self {
+    pub fn new() -> Self {
         Self {
             status_line: StatusLine {
                 version: Version { major: 1, minor: 1 },
-                status,
+                status: Status::NotFound,
             },
+            headers: HashMap::new(),
+            body: None,
         }
     }
-    pub fn serialize(&self) -> String {
-        format!("{}\r\n", self.status_line.serialize())
+
+    pub fn with_status(mut self, status: Status) -> Self {
+        self.status_line.status = status;
+        self
+    }
+
+    pub fn with_header<K: ToString, V: ToString>(mut self, k: K, v: V) -> Self {
+        self.headers
+            .insert(k.to_string().to_lowercase(), v.to_string().to_lowercase());
+        self
+    }
+
+    pub fn with_body<S: ToString>(mut self, body: S) -> Self {
+        let body = body.to_string();
+        let body_len = body.len();
+        self.body = Some(body);
+        self.with_header("Content-Type", "text/plain")
+            .with_header("Content-Length", body_len.to_string())
+    }
+}
+
+impl fmt::Display for Response {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.status_line)?;
+
+        // Sort so tests are easier to write
+        let mut sorted_headers: Vec<_> = self.headers.iter().collect();
+        sorted_headers.sort();
+        for (k, v) in sorted_headers {
+            write!(f, "{}: {}\r\n", k, v)?;
+        }
+        write!(f, "\r\n")?;
+
+        if let Some(b) = self.body.as_ref() {
+            write!(f, "{}", b)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -197,9 +256,9 @@ mod tests {
     }
 
     #[test]
-    fn test_version_serialize() {
+    fn test_version_to_string() {
         let ver = Version { major: 1, minor: 1 };
-        assert_eq!(ver.serialize(), "HTTP/1.1");
+        assert_eq!(ver.to_string(), "HTTP/1.1");
     }
 
     #[test]
@@ -226,6 +285,7 @@ mod tests {
             User-Agent: curl/7.64.1\r\n\
         ";
         let (remain, req) = Request::parser(input).unwrap();
+        println!("remain: {remain}");
         assert!(remain.is_empty());
         assert_eq!(
             req,
@@ -235,30 +295,40 @@ mod tests {
                     path: String::from("/index.html"),
                     version: Version { major: 1, minor: 1 },
                 },
-                host: String::from("localhost:4221"),
-                user_agent: String::from("curl/7.64.1"),
+                headers: [
+                    (String::from("host"), String::from("localhost:4221")),
+                    (String::from("user-agent"), String::from("curl/7.64.1")),
+                ]
+                .into_iter()
+                .collect(),
             }
         );
     }
 
     #[test]
-    fn test_status_line_serialize() {
+    fn test_status_line_to_string() {
         let status_line = StatusLine {
             version: Version { major: 1, minor: 1 },
             status: Status::Ok,
         };
-        assert_eq!(status_line.serialize(), "HTTP/1.1 200 OK\r\n");
+        assert_eq!(status_line.to_string(), "HTTP/1.1 200 OK\r\n");
+
+        let status_line = StatusLine::default();
+        assert_eq!(
+            status_line.to_string(),
+            "HTTP/1.1 500 Internal Server Error\r\n"
+        );
     }
 
     #[test]
-    fn test_response_serialize() {
-        let resp = Response {
-            status_line: StatusLine {
-                version: Version { major: 1, minor: 1 },
-                status: Status::Ok,
-            },
-        };
+    fn test_response_to_string() {
+        let resp = Response::new().with_status(Status::Ok);
+        assert_eq!(resp.to_string(), "HTTP/1.1 200 OK\r\n\r\n");
 
-        assert_eq!(resp.serialize(), "HTTP/1.1 200 OK\r\n\r\n");
+        let resp = Response::new().with_status(Status::Ok).with_body("abc");
+        assert_eq!(
+            resp.to_string(),
+            "HTTP/1.1 200 OK\r\ncontent-length: 3\r\ncontent-type: text/plain\r\n\r\nabc"
+        )
     }
 }

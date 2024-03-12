@@ -13,16 +13,18 @@ fn handle_conn(stream: TcpStream) -> anyhow::Result<()> {
     let bytes_read = stream.read(&mut buf)?;
     let buf_str = from_utf8(&buf[0..bytes_read])?;
 
-    let (_, req) =
-        http::Request::parser(buf_str).map_err(|err| err.map(|e| e.input.to_owned()))?;
-    let status = if req.req_line.path == "/" {
-        http::Status::Ok
-    } else {
-        http::Status::NotFound
-    };
+    let (_, req) = http::Request::parser(buf_str).map_err(|err| err.map(|e| e.input.to_owned()))?;
 
-    let response = http::Response::with_status(status);
-    let _bytes_write = stream.write(response.serialize().as_bytes())?;
+    let response = if req.req_line.path == "/" {
+        http::Response::new().with_status(http::Status::Ok)
+    } else if let Some(remain) = req.req_line.path.strip_prefix("/echo/") {
+        http::Response::new()
+            .with_status(http::Status::Ok)
+            .with_body(remain.to_owned())
+    } else {
+        http::Response::new().with_status(http::Status::NotFound)
+    };
+    let _bytes_write = stream.write(response.to_string().as_bytes())?;
 
     Ok(())
 }
