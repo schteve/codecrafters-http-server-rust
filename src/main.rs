@@ -5,7 +5,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-use http_server_starter_rust::http;
+use http_server_starter_rust::{http, ser::Serialize};
 
 fn get_file_directory() -> Option<PathBuf> {
     let arg_pairs = std::env::args().zip(std::env::args().skip(1));
@@ -35,7 +35,7 @@ async fn handle_conn(stream: TcpStream, file_dir: Option<&PathBuf>) -> anyhow::R
         println!("  GET echo - {remain}");
         http::Response::new()
             .with_status(http::Status::Ok)
-            .with_body(remain.to_owned(), "text/plain")
+            .with_body(remain.as_bytes(), "text/plain")
     } else if req.req_line.path == "/user-agent" {
         let user_agent = req
             .headers
@@ -44,7 +44,7 @@ async fn handle_conn(stream: TcpStream, file_dir: Option<&PathBuf>) -> anyhow::R
         println!("  GET user-agent - {user_agent}");
         http::Response::new()
             .with_status(http::Status::Ok)
-            .with_body(user_agent, "text/plain")
+            .with_body(user_agent.as_bytes(), "text/plain")
     } else if let Some(remain) = req.req_line.path.strip_prefix("/files/") {
         if let Some(dir) = file_dir {
             println!("  GET files - {remain}");
@@ -54,7 +54,7 @@ async fn handle_conn(stream: TcpStream, file_dir: Option<&PathBuf>) -> anyhow::R
             match std::fs::read_to_string(file_path) {
                 Ok(file_data) => http::Response::new()
                     .with_status(http::Status::Ok)
-                    .with_body(file_data, "application/octet-stream"),
+                    .with_body(file_data.as_bytes(), "application/octet-stream"),
                 Err(_) => http::Response::new().with_status(http::Status::NotFound),
             }
         } else {
@@ -65,7 +65,7 @@ async fn handle_conn(stream: TcpStream, file_dir: Option<&PathBuf>) -> anyhow::R
         println!("  GET unknown - 404");
         http::Response::new().with_status(http::Status::NotFound)
     };
-    let _bytes_write = stream.write(response.to_string().as_bytes()).await?;
+    let _bytes_write = stream.write(&response.to_bytes()).await?;
 
     Ok(())
 }

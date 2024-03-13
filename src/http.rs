@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, io};
 
 use nom::{
     self,
@@ -10,6 +10,8 @@ use nom::{
     sequence::{pair, terminated, tuple},
     IResult,
 };
+
+use crate::ser::Serialize;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Method {
@@ -187,7 +189,7 @@ impl std::fmt::Display for StatusLine {
 pub struct Response {
     pub status_line: StatusLine,
     pub headers: HashMap<String, String>,
-    pub body: Option<String>,
+    pub body: Option<Vec<u8>>,
 }
 
 impl Response {
@@ -213,29 +215,28 @@ impl Response {
         self
     }
 
-    pub fn with_body<S1: ToString, S2: ToString>(mut self, body: S1, content_type: S2) -> Self {
-        let body = body.to_string();
+    pub fn with_body<S: ToString>(mut self, body: &[u8], content_type: S) -> Self {
         let body_len = body.len();
-        self.body = Some(body);
+        self.body = Some(body.to_owned());
         self.with_header("Content-Type", content_type.to_string())
             .with_header("Content-Length", body_len.to_string())
     }
 }
 
-impl fmt::Display for Response {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.status_line)?;
+impl Serialize for Response {
+    fn serialize<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+        write!(writer, "{}", self.status_line)?;
 
         // Sort so tests are easier to write
         let mut sorted_headers: Vec<_> = self.headers.iter().collect();
         sorted_headers.sort();
         for (k, v) in sorted_headers {
-            write!(f, "{}: {}\r\n", k, v)?;
+            write!(writer, "{}: {}\r\n", k, v)?;
         }
-        write!(f, "\r\n")?;
+        write!(writer, "\r\n")?;
 
         if let Some(b) = self.body.as_ref() {
-            write!(f, "{}", b)?;
+            writer.write_all(b)?;
         }
 
         Ok(())
@@ -323,14 +324,14 @@ mod tests {
     #[test]
     fn test_response_to_string() {
         let resp = Response::new().with_status(Status::Ok);
-        assert_eq!(resp.to_string(), "HTTP/1.1 200 OK\r\n\r\n");
+        assert_eq!(resp.to_bytes(), b"HTTP/1.1 200 OK\r\n\r\n");
 
         let resp = Response::new()
             .with_status(Status::Ok)
-            .with_body("abc", "text/plain");
+            .with_body(b"abc", "text/plain");
         assert_eq!(
-            resp.to_string(),
-            "HTTP/1.1 200 OK\r\ncontent-length: 3\r\ncontent-type: text/plain\r\n\r\nabc"
+            resp.to_bytes(),
+            b"HTTP/1.1 200 OK\r\ncontent-length: 3\r\ncontent-type: text/plain\r\n\r\nabc"
         )
     }
 }
