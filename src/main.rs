@@ -16,8 +16,10 @@ fn handle_conn(stream: TcpStream) -> anyhow::Result<()> {
     let (_, req) = http::Request::parser(buf_str).map_err(|err| err.map(|e| e.input.to_owned()))?;
 
     let response = if req.req_line.path == "/" {
+        println!("  GET Root");
         http::Response::new().with_status(http::Status::Ok)
     } else if let Some(remain) = req.req_line.path.strip_prefix("/echo/") {
+        println!("  GET echo - {remain}");
         http::Response::new()
             .with_status(http::Status::Ok)
             .with_body(remain.to_owned())
@@ -26,10 +28,12 @@ fn handle_conn(stream: TcpStream) -> anyhow::Result<()> {
             .headers
             .get("user-agent")
             .map_or_else(|| String::new(), |ua| ua.clone());
+        println!("  GET user-agent - {user_agent}");
         http::Response::new()
             .with_status(http::Status::Ok)
             .with_body(user_agent)
     } else {
+        println!("  GET unknown - 404");
         http::Response::new().with_status(http::Status::NotFound)
     };
     let _bytes_write = stream.write(response.to_string().as_bytes())?;
