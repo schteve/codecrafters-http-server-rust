@@ -213,11 +213,11 @@ impl Response {
         self
     }
 
-    pub fn with_body<S: ToString>(mut self, body: S) -> Self {
+    pub fn with_body<S1: ToString, S2: ToString>(mut self, body: S1, content_type: S2) -> Self {
         let body = body.to_string();
         let body_len = body.len();
         self.body = Some(body);
-        self.with_header("Content-Type", "text/plain")
+        self.with_header("Content-Type", content_type.to_string())
             .with_header("Content-Length", body_len.to_string())
     }
 }
@@ -325,7 +325,9 @@ mod tests {
         let resp = Response::new().with_status(Status::Ok);
         assert_eq!(resp.to_string(), "HTTP/1.1 200 OK\r\n\r\n");
 
-        let resp = Response::new().with_status(Status::Ok).with_body("abc");
+        let resp = Response::new()
+            .with_status(Status::Ok)
+            .with_body("abc", "text/plain");
         assert_eq!(
             resp.to_string(),
             "HTTP/1.1 200 OK\r\ncontent-length: 3\r\ncontent-type: text/plain\r\n\r\nabc"
