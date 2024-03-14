@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{env, fs, path::PathBuf};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -8,7 +8,7 @@ use tokio::{
 use http_server_starter_rust::{http, ser::Serialize};
 
 fn get_file_directory() -> Option<PathBuf> {
-    let arg_pairs = std::env::args().zip(std::env::args().skip(1));
+    let arg_pairs = env::args().zip(env::args().skip(1));
     for (a, b) in arg_pairs {
         if a == "--directory" {
             let mut dir = PathBuf::new();
@@ -84,7 +84,7 @@ fn route_get_files(path: &str, file_dir: Option<&PathBuf>) -> http::Response {
     let mut file_path = dir.clone();
     file_path.push(path);
 
-    match std::fs::read_to_string(file_path) {
+    match fs::read_to_string(file_path) {
         Ok(file_data) => http::Response::new(http::Status::Ok)
             .with_body(file_data.as_bytes(), "application/octet-stream"),
         Err(e) => {
@@ -127,7 +127,7 @@ fn route_post_files(req: &http::Request, path: &str, file_dir: Option<&PathBuf>)
     let mut file_path = dir.clone();
     file_path.push(path);
 
-    match std::fs::write(file_path, &body[0..content_len]) {
+    match fs::write(file_path, &body[0..content_len]) {
         Ok(_) => http::Response::new(http::Status::Created),
         Err(e) => {
             println!("  POST files - fail, {e}");

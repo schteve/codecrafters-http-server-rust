@@ -67,7 +67,7 @@ impl Default for Version {
     }
 }
 
-impl std::fmt::Display for Version {
+impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "HTTP/{}.{}", self.major, self.minor)
     }
@@ -187,7 +187,7 @@ impl Status {
     }
 }
 
-impl std::fmt::Display for Status {
+impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {}", self.code(), self.text())
     }
@@ -199,7 +199,7 @@ pub struct StatusLine {
     pub status: Status,
 }
 
-impl std::fmt::Display for StatusLine {
+impl fmt::Display for StatusLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {}\r\n", self.version, self.status)
     }
