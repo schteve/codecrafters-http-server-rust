@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::from_utf8};
+use std::path::PathBuf;
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -24,46 +24,81 @@ async fn handle_conn(stream: TcpStream, file_dir: Option<&PathBuf>) -> anyhow::R
 
     let mut buf = [0u8; 1024];
     let bytes_read = stream.read(&mut buf).await?;
-    let buf_str = from_utf8(&buf[0..bytes_read])?;
+    let buf_read = &buf[0..bytes_read];
 
-    let (_, req) = http::Request::parser(buf_str).map_err(|err| err.map(|e| e.input.to_owned()))?;
+    let (_, req) =
+        http::Request::parser(buf_read).map_err(|err| err.map(|e| e.input.to_owned()))?;
+    let response = if req.req_line.method == http::Method::Get {
+        if req.req_line.path == "/" {
+            println!("  GET Root");
+            http::Response::new().with_status(http::Status::Ok)
+        } else if let Some(remain) = req.req_line.path.strip_prefix("/echo/") {
+            println!("  GET echo - {remain}");
+            http::Response::new()
+                .with_status(http::Status::Ok)
+                .with_body(remain.as_bytes(), "text/plain")
+        } else if req.req_line.path == "/user-agent" {
+            let user_agent = req
+                .headers
+                .get("user-agent")
+                .map_or_else(String::new, |ua| ua.clone());
+            println!("  GET user-agent - {user_agent}");
+            http::Response::new()
+                .with_status(http::Status::Ok)
+                .with_body(user_agent.as_bytes(), "text/plain")
+        } else if let Some(remain) = req.req_line.path.strip_prefix("/files/") {
+            if let Some(dir) = file_dir {
+                println!("  GET files - {remain}");
+                let mut file_path = dir.clone();
+                file_path.push(remain);
 
-    let response = if req.req_line.path == "/" {
-        println!("  GET Root");
-        http::Response::new().with_status(http::Status::Ok)
-    } else if let Some(remain) = req.req_line.path.strip_prefix("/echo/") {
-        println!("  GET echo - {remain}");
-        http::Response::new()
-            .with_status(http::Status::Ok)
-            .with_body(remain.as_bytes(), "text/plain")
-    } else if req.req_line.path == "/user-agent" {
-        let user_agent = req
-            .headers
-            .get("user-agent")
-            .map_or_else(String::new, |ua| ua.clone());
-        println!("  GET user-agent - {user_agent}");
-        http::Response::new()
-            .with_status(http::Status::Ok)
-            .with_body(user_agent.as_bytes(), "text/plain")
-    } else if let Some(remain) = req.req_line.path.strip_prefix("/files/") {
-        if let Some(dir) = file_dir {
-            println!("  GET files - {remain}");
-            let mut file_path = dir.clone();
-            file_path.push(remain);
-
-            match std::fs::read_to_string(file_path) {
-                Ok(file_data) => http::Response::new()
-                    .with_status(http::Status::Ok)
-                    .with_body(file_data.as_bytes(), "application/octet-stream"),
-                Err(_) => http::Response::new().with_status(http::Status::NotFound),
+                match std::fs::read_to_string(file_path) {
+                    Ok(file_data) => http::Response::new()
+                        .with_status(http::Status::Ok)
+                        .with_body(file_data.as_bytes(), "application/octet-stream"),
+                    Err(_) => http::Response::new().with_status(http::Status::NotFound),
+                }
+            } else {
+                println!("  GET files - fail, no directory configured");
+                http::Response::new().with_status(http::Status::Internal)
             }
         } else {
-            println!("  GET files - fail, no directory configured");
-            http::Response::new().with_status(http::Status::Internal)
+            println!("  GET unknown - 404");
+            http::Response::new().with_status(http::Status::NotFound)
+        }
+    } else if req.req_line.method == http::Method::Post {
+        if let Some(remain) = req.req_line.path.strip_prefix("/files/") {
+            if let Some(dir) = file_dir {
+                println!("  POST files - {remain}");
+                if let Some(body) = &req.body {
+                    match req.get_content_length() {
+                        Some(len) if len <= body.len() => {
+                            let mut file_path = dir.clone();
+                            file_path.push(remain);
+
+                            match std::fs::write(file_path, &body[0..len]) {
+                                Ok(_) => http::Response::new().with_status(http::Status::Created),
+                                Err(_) => http::Response::new().with_status(http::Status::Internal),
+                            }
+                        }
+                        _ => {
+                            println!("  POST files - fail, invalid content-length");
+                            http::Response::new().with_status(http::Status::BadRequest)
+                        }
+                    }
+                } else {
+                    println!("  POST files - fail, no body provided");
+                    http::Response::new().with_status(http::Status::BadRequest)
+                }
+            } else {
+                println!("  POST files - fail, no directory configured");
+                http::Response::new().with_status(http::Status::Internal)
+            }
+        } else {
+            http::Response::new().with_status(http::Status::NotFound)
         }
     } else {
-        println!("  GET unknown - 404");
-        http::Response::new().with_status(http::Status::NotFound)
+        http::Response::new().with_status(http::Status::Internal)
     };
     let _bytes_write = stream.write(&response.to_bytes()).await?;
 

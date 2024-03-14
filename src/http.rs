@@ -1,13 +1,13 @@
-use std::{collections::HashMap, fmt, io};
+use std::{collections::HashMap, fmt, io, str};
 
 use nom::{
     self,
     branch::alt,
     bytes::complete::{tag, take_till, take_until1, take_while1},
     character::complete::{digit1, space1},
-    combinator::{map, map_res, value},
+    combinator::{map, map_res, opt, rest, value},
     multi::many0,
-    sequence::{pair, terminated, tuple},
+    sequence::{pair, preceded, terminated, tuple},
     IResult,
 };
 
@@ -27,7 +27,7 @@ pub enum Method {
 }
 
 impl Method {
-    fn parser(input: &str) -> IResult<&str, Self> {
+    fn parser(input: &[u8]) -> IResult<&[u8], Self> {
         alt((
             value(Self::Get, tag("GET")),
             value(Self::Head, tag("HEAD")),
@@ -49,12 +49,12 @@ pub struct Version {
 }
 
 impl Version {
-    fn parser(input: &str) -> IResult<&str, Self> {
+    fn parser(input: &[u8]) -> IResult<&[u8], Self> {
         let (remain, (_, major, _, minor)) = tuple((
             tag("HTTP/"),
-            map_res(digit1, |s: &str| s.parse::<u8>()),
+            map_res(digit1, |s: &[u8]| str::from_utf8(s).unwrap().parse::<u8>()),
             tag("."),
-            map_res(digit1, |s: &str| s.parse::<u8>()),
+            map_res(digit1, |s: &[u8]| str::from_utf8(s).unwrap().parse::<u8>()),
         ))(input)?;
 
         Ok((remain, Self { major, minor }))
@@ -81,7 +81,7 @@ pub struct RequestLine {
 }
 
 impl RequestLine {
-    fn parser(input: &str) -> IResult<&str, Self> {
+    fn parser(input: &[u8]) -> IResult<&[u8], Self> {
         let (remain, (method, _, path, _, version, _)) = tuple((
             Method::parser,
             space1,
@@ -95,7 +95,7 @@ impl RequestLine {
             remain,
             Self {
                 method,
-                path,
+                path: String::from_utf8(path).unwrap(),
                 version,
             },
         ))
@@ -106,21 +106,28 @@ impl RequestLine {
 pub struct Request {
     pub req_line: RequestLine,
     pub headers: HashMap<String, String>,
+    pub body: Option<Vec<u8>>,
 }
 
 impl Request {
-    pub fn parser(input: &str) -> IResult<&str, Self> {
-        let (remain, (req_line, headers)) = tuple((
+    pub fn parser(input: &[u8]) -> IResult<&[u8], Self> {
+        let (remain, (req_line, headers, body)) = tuple((
             RequestLine::parser,
             many0(pair(
                 terminated(take_while1(is_header_key), tag(": ")),
                 terminated(take_until1("\r\n"), tag("\r\n")),
             )),
+            opt(preceded(tag("\r\n"), rest)),
         ))(input)?;
 
         let headers_owned = headers
             .into_iter()
-            .map(|(k, v)| (k.to_lowercase(), v.to_owned()))
+            .map(|(k, v)| {
+                (
+                    str::from_utf8(k).unwrap().to_lowercase(),
+                    str::from_utf8(v).unwrap().to_owned(),
+                )
+            })
             .collect();
 
         Ok((
@@ -128,22 +135,31 @@ impl Request {
             Self {
                 req_line,
                 headers: headers_owned,
+                body: body.map(|b| b.to_vec()),
             },
         ))
     }
+
+    pub fn get_content_length(&self) -> Option<usize> {
+        self.headers
+            .get("content-length")
+            .and_then(|s| s.parse().ok())
+    }
 }
 
-fn is_whitespace(c: char) -> bool {
-    c == ' ' || c == '\t' || c == '\r' || c == '\n'
+fn is_whitespace(c: u8) -> bool {
+    c == b' ' || c == b'\t' || c == b'\r' || c == b'\n'
 }
 
-fn is_header_key(c: char) -> bool {
-    c.is_ascii_alphabetic() || c == '-'
+fn is_header_key(c: u8) -> bool {
+    c.is_ascii_alphabetic() || c == b'-'
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
 pub enum Status {
     Ok,
+    Created,
+    BadRequest,
     NotFound,
     #[default]
     Internal,
@@ -153,6 +169,8 @@ impl Status {
     pub fn code(&self) -> u32 {
         match self {
             Self::Ok => 200,
+            Self::Created => 201,
+            Self::BadRequest => 400,
             Self::NotFound => 404,
             Self::Internal => 500,
         }
@@ -161,6 +179,8 @@ impl Status {
     pub fn text(&self) -> &'static str {
         match self {
             Self::Ok => "OK",
+            Self::Created => "Created",
+            Self::BadRequest => "Bad Request",
             Self::NotFound => "NOT FOUND",
             Self::Internal => "Internal Server Error",
         }
@@ -249,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_version_parser() {
-        let input = "HTTP/1.1";
+        let input = b"HTTP/1.1";
 
         let (remain, ver) = Version::parser(input).unwrap();
         assert!(remain.is_empty());
@@ -264,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_request_line_parser() {
-        let input = "GET /index.html HTTP/1.1\r\n";
+        let input = b"GET /index.html HTTP/1.1\r\n";
 
         let (remain, req_line) = RequestLine::parser(input).unwrap();
         assert!(remain.is_empty());
@@ -280,13 +300,12 @@ mod tests {
 
     #[test]
     fn test_request_parser() {
-        let input = "\
+        let input = b"\
             GET /index.html HTTP/1.1\r\n\
             Host: localhost:4221\r\n\
             User-Agent: curl/7.64.1\r\n\
         ";
         let (remain, req) = Request::parser(input).unwrap();
-        println!("remain: {remain}");
         assert!(remain.is_empty());
         assert_eq!(
             req,
@@ -302,6 +321,7 @@ mod tests {
                 ]
                 .into_iter()
                 .collect(),
+                body: None,
             }
         );
     }
