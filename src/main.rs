@@ -79,20 +79,23 @@ fn route_get_user_agent(req: &http::Request) -> http::Response {
 }
 
 fn route_get_files(path: &str, file_dir: Option<&PathBuf>) -> http::Response {
-    if let Some(dir) = file_dir {
-        println!("  GET files - {path}");
-        let mut file_path = dir.clone();
-        file_path.push(path);
-
-        match std::fs::read_to_string(file_path) {
-            Ok(file_data) => http::Response::new()
-                .with_status(http::Status::Ok)
-                .with_body(file_data.as_bytes(), "application/octet-stream"),
-            Err(_) => http::Response::new().with_status(http::Status::NotFound),
-        }
-    } else {
+    let Some(dir) = file_dir else {
         println!("  GET files - fail, no directory configured");
-        http::Response::new().with_status(http::Status::Internal)
+        return http::Response::new().with_status(http::Status::Internal);
+    };
+
+    println!("  GET files - {path}");
+    let mut file_path = dir.clone();
+    file_path.push(path);
+
+    match std::fs::read_to_string(file_path) {
+        Ok(file_data) => http::Response::new()
+            .with_status(http::Status::Ok)
+            .with_body(file_data.as_bytes(), "application/octet-stream"),
+        Err(e) => {
+            println!("  GET files - fail, {e}");
+            http::Response::new().with_status(http::Status::NotFound)
+        }
     }
 }
 
@@ -105,31 +108,36 @@ fn route_post(req: &http::Request, file_dir: Option<&PathBuf>) -> http::Response
 }
 
 fn route_post_files(req: &http::Request, path: &str, file_dir: Option<&PathBuf>) -> http::Response {
-    if let Some(dir) = file_dir {
-        println!("  POST files - {path}");
-        if let Some(body) = &req.body {
-            match req.get_content_length() {
-                Some(len) if len <= body.len() => {
-                    let mut file_path = dir.clone();
-                    file_path.push(path);
-
-                    match std::fs::write(file_path, &body[0..len]) {
-                        Ok(_) => http::Response::new().with_status(http::Status::Created),
-                        Err(_) => http::Response::new().with_status(http::Status::Internal),
-                    }
-                }
-                _ => {
-                    println!("  POST files - fail, invalid content-length");
-                    http::Response::new().with_status(http::Status::BadRequest)
-                }
-            }
-        } else {
-            println!("  POST files - fail, no body provided");
-            http::Response::new().with_status(http::Status::BadRequest)
-        }
-    } else {
+    let Some(dir) = file_dir else {
         println!("  POST files - fail, no directory configured");
-        http::Response::new().with_status(http::Status::Internal)
+        return http::Response::new().with_status(http::Status::Internal);
+    };
+
+    let Some(body) = &req.body else {
+        println!("  POST files - fail, no body provided");
+        return http::Response::new().with_status(http::Status::BadRequest);
+    };
+
+    let Some(content_len) = req.get_content_length() else {
+        println!("  POST files - fail, no content-length");
+        return http::Response::new().with_status(http::Status::BadRequest);
+    };
+
+    if content_len > body.len() {
+        println!("  POST files - fail, invalid content-length");
+        return http::Response::new().with_status(http::Status::BadRequest);
+    }
+
+    println!("  POST files - {path}");
+    let mut file_path = dir.clone();
+    file_path.push(path);
+
+    match std::fs::write(file_path, &body[0..content_len]) {
+        Ok(_) => http::Response::new().with_status(http::Status::Created),
+        Err(e) => {
+            println!("  POST files - fail, {e}");
+            http::Response::new().with_status(http::Status::Internal)
+        }
     }
 }
 
