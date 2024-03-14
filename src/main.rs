@@ -50,7 +50,7 @@ fn route_get(req: &http::Request, file_dir: Option<&PathBuf>) -> http::Response 
     } else if let Some(remain) = req.req_line.path.strip_prefix("/files/") {
         route_get_files(remain, file_dir)
     } else {
-        println!("  GET unknown - 404");
+        println!("  GET unknown ({}) - 404", req.req_line.path);
         http::Response::new(http::Status::NotFound)
     }
 }
@@ -98,6 +98,7 @@ fn route_post(req: &http::Request, file_dir: Option<&PathBuf>) -> http::Response
     if let Some(remain) = req.req_line.path.strip_prefix("/files/") {
         route_post_files(req, remain, file_dir)
     } else {
+        println!("  POST unknown ({}) - 404", req.req_line.path);
         http::Response::new(http::Status::NotFound)
     }
 }
