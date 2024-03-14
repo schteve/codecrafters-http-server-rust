@@ -213,20 +213,15 @@ pub struct Response {
 }
 
 impl Response {
-    pub fn new() -> Self {
+    pub fn new(status: Status) -> Self {
         Self {
             status_line: StatusLine {
                 version: Version { major: 1, minor: 1 },
-                status: Status::NotFound,
+                status,
             },
             headers: HashMap::new(),
             body: None,
         }
-    }
-
-    pub fn with_status(mut self, status: Status) -> Self {
-        self.status_line.status = status;
-        self
     }
 
     pub fn with_header<K: ToString, V: ToString>(mut self, k: K, v: V) -> Self {
@@ -342,13 +337,11 @@ mod tests {
     }
 
     #[test]
-    fn test_response_to_string() {
-        let resp = Response::new().with_status(Status::Ok);
+    fn test_response_to_bytes() {
+        let resp = Response::new(Status::Ok);
         assert_eq!(resp.to_bytes(), b"HTTP/1.1 200 OK\r\n\r\n");
 
-        let resp = Response::new()
-            .with_status(Status::Ok)
-            .with_body(b"abc", "text/plain");
+        let resp = Response::new(Status::Ok).with_body(b"abc", "text/plain");
         assert_eq!(
             resp.to_bytes(),
             b"HTTP/1.1 200 OK\r\ncontent-length: 3\r\ncontent-type: text/plain\r\n\r\nabc"

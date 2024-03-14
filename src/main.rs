@@ -33,7 +33,7 @@ async fn handle_conn(stream: TcpStream, file_dir: Option<&PathBuf>) -> anyhow::R
     } else if req.req_line.method == http::Method::Post {
         route_post(&req, file_dir)
     } else {
-        http::Response::new().with_status(http::Status::Internal)
+        http::Response::new(http::Status::Internal)
     };
     let _bytes_write = stream.write(&response.to_bytes()).await?;
 
@@ -51,20 +51,18 @@ fn route_get(req: &http::Request, file_dir: Option<&PathBuf>) -> http::Response 
         route_get_files(remain, file_dir)
     } else {
         println!("  GET unknown - 404");
-        http::Response::new().with_status(http::Status::NotFound)
+        http::Response::new(http::Status::NotFound)
     }
 }
 
 fn route_get_root() -> http::Response {
     println!("  GET Root");
-    http::Response::new().with_status(http::Status::Ok)
+    http::Response::new(http::Status::Ok)
 }
 
 fn route_get_echo(path: &str) -> http::Response {
     println!("  GET echo - {path}");
-    http::Response::new()
-        .with_status(http::Status::Ok)
-        .with_body(path.as_bytes(), "text/plain")
+    http::Response::new(http::Status::Ok).with_body(path.as_bytes(), "text/plain")
 }
 
 fn route_get_user_agent(req: &http::Request) -> http::Response {
@@ -73,15 +71,13 @@ fn route_get_user_agent(req: &http::Request) -> http::Response {
         .get("user-agent")
         .map_or_else(String::new, |ua| ua.clone());
     println!("  GET user-agent - {user_agent}");
-    http::Response::new()
-        .with_status(http::Status::Ok)
-        .with_body(user_agent.as_bytes(), "text/plain")
+    http::Response::new(http::Status::Ok).with_body(user_agent.as_bytes(), "text/plain")
 }
 
 fn route_get_files(path: &str, file_dir: Option<&PathBuf>) -> http::Response {
     let Some(dir) = file_dir else {
         println!("  GET files - fail, no directory configured");
-        return http::Response::new().with_status(http::Status::Internal);
+        return http::Response::new(http::Status::Internal);
     };
 
     println!("  GET files - {path}");
@@ -89,12 +85,11 @@ fn route_get_files(path: &str, file_dir: Option<&PathBuf>) -> http::Response {
     file_path.push(path);
 
     match std::fs::read_to_string(file_path) {
-        Ok(file_data) => http::Response::new()
-            .with_status(http::Status::Ok)
+        Ok(file_data) => http::Response::new(http::Status::Ok)
             .with_body(file_data.as_bytes(), "application/octet-stream"),
         Err(e) => {
             println!("  GET files - fail, {e}");
-            http::Response::new().with_status(http::Status::NotFound)
+            http::Response::new(http::Status::NotFound)
         }
     }
 }
@@ -103,29 +98,29 @@ fn route_post(req: &http::Request, file_dir: Option<&PathBuf>) -> http::Response
     if let Some(remain) = req.req_line.path.strip_prefix("/files/") {
         route_post_files(req, remain, file_dir)
     } else {
-        http::Response::new().with_status(http::Status::NotFound)
+        http::Response::new(http::Status::NotFound)
     }
 }
 
 fn route_post_files(req: &http::Request, path: &str, file_dir: Option<&PathBuf>) -> http::Response {
     let Some(dir) = file_dir else {
         println!("  POST files - fail, no directory configured");
-        return http::Response::new().with_status(http::Status::Internal);
+        return http::Response::new(http::Status::Internal);
     };
 
     let Some(body) = &req.body else {
         println!("  POST files - fail, no body provided");
-        return http::Response::new().with_status(http::Status::BadRequest);
+        return http::Response::new(http::Status::BadRequest);
     };
 
     let Some(content_len) = req.get_content_length() else {
         println!("  POST files - fail, no content-length");
-        return http::Response::new().with_status(http::Status::BadRequest);
+        return http::Response::new(http::Status::BadRequest);
     };
 
     if content_len > body.len() {
         println!("  POST files - fail, invalid content-length");
-        return http::Response::new().with_status(http::Status::BadRequest);
+        return http::Response::new(http::Status::BadRequest);
     }
 
     println!("  POST files - {path}");
@@ -133,10 +128,10 @@ fn route_post_files(req: &http::Request, path: &str, file_dir: Option<&PathBuf>)
     file_path.push(path);
 
     match std::fs::write(file_path, &body[0..content_len]) {
-        Ok(_) => http::Response::new().with_status(http::Status::Created),
+        Ok(_) => http::Response::new(http::Status::Created),
         Err(e) => {
             println!("  POST files - fail, {e}");
-            http::Response::new().with_status(http::Status::Internal)
+            http::Response::new(http::Status::Internal)
         }
     }
 }
